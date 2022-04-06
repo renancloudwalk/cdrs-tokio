@@ -111,7 +111,7 @@ struct ExponentialReconnectionSchedule {
 impl ReconnectionSchedule for ExponentialReconnectionSchedule {
     fn next_delay(&mut self) -> Option<Duration> {
         if self.attempt == self.max_attempts {
-            return Some(self.max_delay);
+            return None;
         }
 
         self.attempt += 1;
