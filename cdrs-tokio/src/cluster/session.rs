@@ -287,7 +287,7 @@ impl<
 
         let query_frame = Frame::new_req_prepare(query.to_string(), flags, self.version);
 
-        self.send_frame(query_frame, false, None, None, None, None, None, None)
+        self.send_frame(query_frame, true, None, None, None, None, None, None)
             .await
             .and_then(|response| response.response_body())
             .and_then(|body| {
