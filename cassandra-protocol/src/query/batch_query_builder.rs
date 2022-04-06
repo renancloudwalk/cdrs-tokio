@@ -1,7 +1,7 @@
 use crate::consistency::Consistency;
 use crate::error::{Error as CError, Result as CResult};
 use crate::frame::frame_batch::{BatchQuery, BatchQuerySubj, BatchType, BodyReqBatch};
-use crate::query::{PreparedQuery, QueryFlags, QueryValues};
+use crate::query::{PreparedQuery, QueryValues};
 
 pub type QueryBatch = BodyReqBatch;
 
@@ -39,7 +39,6 @@ impl BatchQueryBuilder {
     /// Add a query (non-prepared one)
     pub fn add_query<T: Into<String>>(mut self, query: T, values: QueryValues) -> Self {
         self.queries.push(BatchQuery {
-            is_prepared: false,
             subject: BatchQuerySubj::QueryString(query.into()),
             values,
         });
@@ -49,7 +48,6 @@ impl BatchQueryBuilder {
     /// Add a query (prepared one)
     pub fn add_query_prepared(mut self, query: &PreparedQuery, values: QueryValues) -> Self {
         self.queries.push(BatchQuery {
-            is_prepared: true,
             subject: BatchQuerySubj::PreparedId(query.id.clone()),
             values,
         });
@@ -77,16 +75,6 @@ impl BatchQueryBuilder {
     }
 
     pub fn build(self) -> CResult<BodyReqBatch> {
-        let mut flags = QueryFlags::empty();
-
-        if self.serial_consistency.is_some() {
-            flags.insert(QueryFlags::WITH_SERIAL_CONSISTENCY);
-        }
-
-        if self.timestamp.is_some() {
-            flags.insert(QueryFlags::WITH_DEFAULT_TIMESTAMP);
-        }
-
         let with_names_for_values = self.queries.iter().all(|q| q.values.has_names());
 
         if !with_names_for_values {
@@ -100,14 +88,9 @@ impl BatchQueryBuilder {
             }
         }
 
-        if with_names_for_values {
-            flags.insert(QueryFlags::WITH_NAMES_FOR_VALUES);
-        }
-
         Ok(BodyReqBatch {
             batch_type: self.batch_type,
             queries: self.queries,
-            query_flags: flags,
             consistency: self.consistency,
             serial_consistency: self.serial_consistency,
             timestamp: self.timestamp,

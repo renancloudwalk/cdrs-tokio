@@ -16,8 +16,6 @@ pub struct BodyReqBatch {
     pub batch_type: BatchType,
     pub queries: Vec<BatchQuery>,
     pub consistency: Consistency,
-    // **IMPORTANT NOTE:** with names flag does not work and should not be used.
-    pub query_flags: QueryFlags,
     pub serial_consistency: Option<Consistency>,
     pub timestamp: Option<CLong>,
 }
@@ -37,9 +35,14 @@ impl Serialize for BodyReqBatch {
         let consistency: CIntShort = self.consistency.into();
         consistency.serialize(cursor);
 
-        let flag_byte = self.query_flags.bits();
-
-        flag_byte.serialize(cursor);
+        let mut flags = QueryFlags::empty();
+        if self.serial_consistency.is_some() {
+            flags.insert(QueryFlags::WITH_SERIAL_CONSISTENCY)
+        }
+        if self.timestamp.is_some() {
+            flags.insert(QueryFlags::WITH_DEFAULT_TIMESTAMP)
+        }
+        flags.bits().serialize(cursor);
 
         if let Some(serial_consistency) = self.serial_consistency {
             let serial_consistency: CIntShort = serial_consistency.into();
@@ -88,7 +91,6 @@ impl FromCursor for BodyReqBatch {
             batch_type,
             queries,
             consistency,
-            query_flags,
             serial_consistency,
             timestamp,
         ))
@@ -141,14 +143,10 @@ pub enum BatchQuerySubj {
 /// The structure that represents a query to be batched.
 #[derive(Debug, Clone, Constructor, PartialEq, Eq)]
 pub struct BatchQuery {
-    /// Indicates if a query was prepared.
-    pub is_prepared: bool,
     /// Contains either id of prepared query or a query itself.
     pub subject: BatchQuerySubj,
-    /// It is the optional name of the following <value_i>. It must be present
-    /// if and only if the 0x40 flag is provided for the batch.
-    /// **Important note:** this feature does not work and should not be
-    /// used. It is specified in a way that makes it impossible for the server
+    /// **Important note:** QueryValues::NamedValues does not work and should not be
+    /// used for batches. It is specified in a way that makes it impossible for the server
     /// to implement. This will be fixed in a future version of the native
     /// protocol. See <https://issues.apache.org/jira/browse/CASSANDRA-10246> for
     /// more details
@@ -157,16 +155,15 @@ pub struct BatchQuery {
 
 impl Serialize for BatchQuery {
     fn serialize(&self, cursor: &mut Cursor<&mut Vec<u8>>) {
-        // kind
-        if self.is_prepared {
-            1u8.serialize(cursor);
-        } else {
-            0u8.serialize(cursor);
-        }
-
         match &self.subject {
-            BatchQuerySubj::PreparedId(id) => id.serialize(cursor),
-            BatchQuerySubj::QueryString(s) => serialize_str_long(cursor, s),
+            BatchQuerySubj::PreparedId(id) => {
+                1u8.serialize(cursor);
+                id.serialize(cursor);
+            }
+            BatchQuerySubj::QueryString(s) => {
+                0u8.serialize(cursor);
+                serialize_str_long(cursor, s);
+            }
         }
 
         let len = self.values.len() as CIntShort;
@@ -198,11 +195,7 @@ impl FromCursor for BatchQuery {
             values.push(Value::from_cursor(cursor)?);
         }
 
-        Ok(BatchQuery::new(
-            is_prepared,
-            subject,
-            QueryValues::SimpleValues(values),
-        ))
+        Ok(BatchQuery::new(subject, QueryValues::SimpleValues(values)))
     }
 }
 
@@ -231,7 +224,7 @@ mod tests {
     use crate::consistency::Consistency;
     use crate::frame::frame_batch::{BatchQuery, BatchQuerySubj, BatchType, BodyReqBatch};
     use crate::frame::FromCursor;
-    use crate::query::{QueryFlags, QueryValues};
+    use crate::query::QueryValues;
     use crate::types::prelude::Value;
 
     #[test]
@@ -240,7 +233,6 @@ mod tests {
         let mut cursor = Cursor::new(data.as_slice());
 
         let query = BatchQuery::from_cursor(&mut cursor).unwrap();
-        assert!(!query.is_prepared);
         assert_eq!(query.subject, BatchQuerySubj::QueryString("A".into()));
         assert_eq!(query.values, QueryValues::SimpleValues(vec![Value::NotSet]));
     }
@@ -254,10 +246,6 @@ mod tests {
         assert_eq!(body.batch_type, BatchType::Logged);
         assert!(body.queries.is_empty());
         assert_eq!(body.consistency, Consistency::Any);
-        assert_eq!(
-            body.query_flags,
-            QueryFlags::WITH_SERIAL_CONSISTENCY | QueryFlags::WITH_DEFAULT_TIMESTAMP
-        );
         assert_eq!(body.serial_consistency, Some(Consistency::One));
         assert_eq!(body.timestamp, Some(0x0102030405060708));
     }
